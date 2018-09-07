@@ -3,6 +3,8 @@
 import sys
 import os
 import uuid
+import random as rd
+import hashlib as hl
 from PyQt4 import QtGui as gui
 from PyQt4 import QtCore as core
 from PyQt4 import Qt as qt
@@ -33,21 +35,81 @@ class Utils(object):
         smac= mac >> 24;
         lmac= mac & ((1 << 24) - 1);
         crypt = (smac | lmac) ^ date;
+        md5   = hl.md5(str(crypt)).hexdigest();
+        crypt = '%s%X' % (md5.upper(), crypt);
+        return crypt;
     #
     def decrypt(cipher):
+        cipher = str(cipher);
+        if len(cipher) <= 32:
+            return False;
+        md5 = cipher[:32];
+        _cipher = cipher[32:];
+        _md5    = hl.md5(_cipher).hexdigest();
+        if md5 != _md5.upper():
+            return False;
         mac = Utils.getMac();
         smac= mac >> 24;
         lmac= mac & ((1 << 24) - 1);
-        return cipher ^ (smac | lmac);
+        try:
+            _cipher = int(_cipher, 16);
+        except:
+            return False;
+        date = _cipher ^ (smac | lmac);
+        return date;
+    #
+    @staticmethod
+    def isDateValid(date):
+        try:
+            date = tm.strptime(str(date), '%Y%m%d');
+        except:
+            return False;
+        year = date.tm_year;
+        month= date.tm_mon;
+        mday = date.tm_mday;
+        return year >= 2018 and month >= 1 and month <= 12 and mday >= 1 and mday <= 31;
     #
     @staticmethod
     def isRegistered():
         cwd = os.getcwd();
         file= '%s/data.dat';
         if os.path.isfile(file):
-            pass
+            try:
+                fileObj = open(file, 'rb');
+                data = fileObj.read(512);
+                date = Utils.decrypt(data);
+                if not date:
+                    return False;
+                fileObj.close();
+                return Utils.isDateValid(date);
+            except:
+                return False;
         else:
             return False;
+    #
+    @staticmethod
+    def doRegister(registerCode):
+        try:
+            date = Utils.decrypt(registerCode);
+            if not date:
+                return False;
+        except:
+            return False;
+        if not Utils.isDateValid(date):
+            return False;
+        cwd = os.getcwd();
+        file= '%s/data.dat';
+        if os.path.isfile(file):
+            try:
+                fileObj = open(file, 'r+');
+                fileObj.write(registerCode);
+                fileObj.close();
+                return True;
+            except:
+                return False;
+        else:
+            return False;
+    #
     @staticmethod
     def  getMac():
         return '%X' % uuid.getnode();
@@ -299,6 +361,9 @@ class Window(gui.QMainWindow):
         #
         self.sameColorDelta = 8;
         #
+        self.timesCount = 0;
+        self.unregisteredLimit = rd.randint(0, 5);
+        #
         self.circleMarked = [];
         self.circleMarkedRecyle = [];
         self.cwd = os.getcwd();
@@ -341,6 +406,16 @@ class Window(gui.QMainWindow):
             self.outputLabel.setColor(self.defaultResultColor);
     #
     def captureHandle(self):
+        if not Utils.isRegistered():
+            self.timesCount += 1;
+            if self.timesCount > self.unregisteredLimit:
+                self.close();
+                sys.exit(0);
+            msgBox = gui.QMessageBox(self);
+            msgBox.setWindowTitle(u'未注册');
+            msgBox.setText(u'请先注册，以免影响后续的使用');
+            msgBox.setButtonText(gui.QMessageBox.Ok, u'确认');
+            msgBox.show();
         self.cameraWorker.stop();
         self.cameraThread.exit();
         imageLabel = self.getImageLabel();
@@ -528,6 +603,18 @@ VI.&nbsp;点击“继续”按钮进入下一个产品检测循环。
 ''';
         gui.QMessageBox.about(self, title, body);
     #
+    def aboutRegisterHandle(self):
+        registerCode, ok = gui.QInputDialog.getText(self, u'注册', u'请输入注册码：', gui.QLineEdit.Normal, u'');
+        if ok:
+            if Utils.doRegister(registerCode):
+                self.actionRegister.setEnabled(False);
+            else:
+                msgBox = gui.QMessageBox(self);
+                msgBox.setWindowTitle(u'出错了');
+                msgBox.setText(u'输入的注册码不合法!');
+                msgBox.setButtonText(gui.QMessageBox.Ok, u'确认');
+                msgBox.show();
+    #
     def createActions(self):
         self.actionCapture = gui.QAction(
             gui.QIcon(self.getFullPath('images/capture.png')),
@@ -581,6 +668,12 @@ VI.&nbsp;点击“继续”按钮进入下一个产品检测循环。
             gui.QIcon(self.getFullPath('images/help.png')),
             u'帮助', self, shortcut = 'Ctrl+H',
             triggered = self.aboutHelpHandle
+        );
+        #
+        self.actionRegister = gui.QAction(
+            gui.QIcon(self.getFullPath('images/register.png')),
+            u'注册', self, shortcut = 'Ctrl+R',
+            triggered = self.aboutRegisterHandle
         );
         return self;
     #
@@ -648,6 +741,10 @@ VI.&nbsp;点击“继续”按钮进入下一个产品检测循环。
     def initMenus(self):
         menuBar = self.menuBar();
         self.aboutMenu = gui.QMenu(u'关于');
+        if not Utils.isRegistered():
+            self.actionRegister.setEnabled(True);
+            self.aboutMenu.addAction(self.actionRegister);
+            self.aboutMenu.addSeparator();
         self.aboutMenu.addAction(self.actionAboutAuthor);
         self.aboutMenu.addAction(self.actionAboutHelp);
         menuBar.addMenu(self.aboutMenu);
@@ -713,8 +810,7 @@ VI.&nbsp;点击“继续”按钮进入下一个产品检测循环。
         super(Window, self).close();
 #
 if __name__ == '__main__':
-    if Utils.isRegistered():
-        app = gui.QApplication(sys.argv);
-        window = Window();
-        window.run();
-        sys.exit(app.exec_());
+    app = gui.QApplication(sys.argv);
+    window = Window();
+    window.run();
+    sys.exit(app.exec_());
